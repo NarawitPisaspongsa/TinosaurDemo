@@ -1,0 +1,25 @@
+# --- Build Artifacts ---
+/[Bb]uild/
+/[Oo]ut/
+/bin/
+
+# --- IDE Specific (Visual Studio / VS Code) ---
+.vs/
+/out/
+*.user
+*.sln
+*.vcxproj
+*.filters
+
+# --- CMake Junk ---
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+.cache/
+
+# --- DO NOT IGNORE THESE ---
+# !/vendor/
+# !/include/
