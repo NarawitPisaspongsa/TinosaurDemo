@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <cglm/cglm.h>
+
 #include "utils/shader_load.h"
 
 void framebuffer_size_callback(GLFWwindow*, int, int);
@@ -16,14 +17,16 @@ typedef struct {
 
 void clearcolor_struct(colorVal);
 
-// for vertex shader, we use const char* global variable (see fragmentShaderSource)
-const char* vertexShaderSource = "#version 330 core\n"
-"layout (location = 0) in vec3 aPos;\n"
-"void main()\n"
-"{\n"
-"gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
-"}\0";
-
+// // for vertex shader, we use const char* global variable (see fragmentShaderSource)
+// const char* vertexShaderSource = "#version 330 core\n"
+// "layout (location = 0) in vec3 aPos;\n"
+// "out vec4 vertexColor;\n"
+// "void main()\n"
+// "{\n"
+// "gl_Position = vec4(aPos, 1.0);\n"
+// "vertexColor = vec4(0.5, 0.0, 0.0, 1.0);\n"
+// "}\0";
+//
 #ifdef _WIN32
 #include <windows.h>
 #include <libloaderapi.h>
@@ -51,6 +54,7 @@ int main() {
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
   
   GLFWwindow* window = glfwCreateWindow(800, 600, "LearnOpenGL", NULL, NULL);
 
@@ -65,6 +69,17 @@ int main() {
     return -1;
   }
 
+  // get the gpu system max vertex attrib
+  int nrAttributes;
+  glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &nrAttributes);
+  printf("Maximum nr of vertex attributes supported: %d\n", nrAttributes);
+
+  // get the clock system frequency
+  // uint64_t frequency = glfwGetTimerFrequency();
+  // printf("Timer frequency in hz: %llu", frequency);
+  
+
+
   glViewport(0, 0, 800, 600);
   glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
@@ -77,21 +92,30 @@ int main() {
 
     // 0.5f, -0.5f, 0.0f, // bottom right
     -0.5f, -0.5f, 0.0f, // bottom left
-    -0.5f, 0.5f, 0.0f // top left
+    // -0.5f, 0.5f, 0.0f // top left
   };
 
   unsigned int indices[] = {
-    0, 1, 3, // first triangle
-    1, 2, 3 // second triangle
+    // 0, 1, 3, // first triangle
+    // 1, 2, 3 // second triangle
+    0, 1, 2,
   };
 
 
+  // getting the vertex shader source (using a file instead)
+  char * vertexShaderSource = get_shader_content("../src/shaders/dark_tri.vs");
+
+  if (vertexShaderSource == NULL || strlen(vertexShaderSource) == 0) {
+      printf("CRITICAL ERROR: Vertex Shader source is empty or file not found!\n");
+  } else {
+      printf("Vertex Shader Loaded:\n%s\n", vertexShaderSource);
+  }
   // store vertexShader as int, returned as a reference id
   unsigned int vertexShader;
   vertexShader = glCreateShader(GL_VERTEX_SHADER);
 
   // compile the shader
-  glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+  glShaderSource(vertexShader, 1, (const char**)&vertexShaderSource, NULL);
   glCompileShader(vertexShader);
 
   // see compile success or not
@@ -108,7 +132,7 @@ int main() {
   char * fragmentShaderSource = get_shader_content("../src/shaders/orange_tri.fs");
 
   if (fragmentShaderSource == NULL || strlen(fragmentShaderSource) == 0) {
-      printf("CRITICAL ERROR: Shader source is empty or file not found!\n");
+      printf("CRITICAL ERROR: Vertex Shader source is empty or file not found!\n");
   } else {
       printf("Fragment Shader Loaded:\n%s\n", fragmentShaderSource);
   }
@@ -173,7 +197,7 @@ int main() {
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
   // set wireframe mode
-  glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+  // glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
   // render loop
   while(!glfwWindowShouldClose(window)) {
@@ -193,6 +217,12 @@ int main() {
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 
+    // uint64_t rawValue = glfwGetTimerValue();
+    // uint64_t freq = glfwGetTimerFrequency(); // 10,000,000 in your case
+    //
+    // // This is essentially what glfwGetTime() returns:
+    // double timeInSeconds = (double)rawValue / (double)freq;
+    // printf("%f\n", timeInSeconds);
 
     // check for events
     glfwSwapBuffers(window);
