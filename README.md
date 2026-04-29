@@ -13,7 +13,7 @@ Small demo project focusing on ECS architecture in C and gun implementation.
 * **Build:** Optimized for low overhead
 
 ### Video Demo (30s)
-[recording.mp4]
+![](recording.mp4)
 
 ---
 
