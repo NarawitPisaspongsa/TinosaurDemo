@@ -1,247 +1,215 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-#include <stdio.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include <string.h>
 #include <cglm/cglm.h>
 
-#include "utils/shader_load.h"
+#include <ecs/ecs.h>
+#include <game/components.h>
+#include <systems/camera_system.h>
+#include <systems/render_system.h>
+#include <systems/input_system.h>
 
-void framebuffer_size_callback(GLFWwindow*, int, int);
-void processInput(GLFWwindow*);
+/* --- Input Globals (Initialized to Zero) --- */
+static float g_mouse_dx = 0.0f;
+static float g_mouse_dy = 0.0f;
+static int first_mouse  = 1;
+static float last_x     = 1280.0f / 2.0f;
+static float last_y     = 720.0f  / 2.0f;
 
-typedef struct {
-  float r, g, b, a;
-} colorVal;
+/* --- Embedded Shader Sources --- */
+static const char *VERT_SRC =
+    "#version 330 core\n"
+    "layout(location = 0) in vec3 aPos;\n"
+    "uniform mat4 model;\n"
+    "uniform mat4 view;\n"
+    "uniform mat4 projection;\n"
+    "void main() {\n"
+    "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n"
+    "}\n";
 
-void clearcolor_struct(colorVal);
+static const char *FRAG_SRC =
+    "#version 330 core\n"
+    "out vec4 FragColor;\n"
+    "uniform vec3 objectColor;\n"
+    "void main() {\n"
+    "    FragColor = vec4(objectColor, 1.0);\n"
+    "}\n";
 
-// // for vertex shader, we use const char* global variable (see fragmentShaderSource)
-// const char* vertexShaderSource = "#version 330 core\n"
-// "layout (location = 0) in vec3 aPos;\n"
-// "out vec4 vertexColor;\n"
-// "void main()\n"
-// "{\n"
-// "gl_Position = vec4(aPos, 1.0);\n"
-// "vertexColor = vec4(0.5, 0.0, 0.0, 1.0);\n"
-// "}\0";
-//
-#ifdef _WIN32
-#include <windows.h>
-#include <libloaderapi.h>
-#endif
+/* --- Cube Vertex Data --- */
+static const float CUBE_VERTS[] = {
+    -0.5f,-0.5f,-0.5f,  0.5f,-0.5f,-0.5f,  0.5f, 0.5f,-0.5f,
+     0.5f, 0.5f,-0.5f, -0.5f, 0.5f,-0.5f, -0.5f,-0.5f,-0.5f,
+    -0.5f,-0.5f, 0.5f,  0.5f,-0.5f, 0.5f,  0.5f, 0.5f, 0.5f,
+     0.5f, 0.5f, 0.5f, -0.5f, 0.5f, 0.5f, -0.5f,-0.5f, 0.5f,
+    -0.5f, 0.5f, 0.5f, -0.5f, 0.5f,-0.5f, -0.5f,-0.5f,-0.5f,
+    -0.5f,-0.5f,-0.5f, -0.5f,-0.5f, 0.5f, -0.5f, 0.5f, 0.5f,
+     0.5f, 0.5f, 0.5f,  0.5f, 0.5f,-0.5f,  0.5f,-0.5f,-0.5f,
+     0.5f,-0.5f,-0.5f,  0.5f,-0.5f, 0.5f,  0.5f, 0.5f, 0.5f,
+    -0.5f,-0.5f,-0.5f,  0.5f,-0.5f,-0.5f,  0.5f,-0.5f, 0.5f,
+     0.5f,-0.5f, 0.5f, -0.5f,-0.5f, 0.5f, -0.5f,-0.5f,-0.5f,
+    -0.5f, 0.5f,-0.5f,  0.5f, 0.5f,-0.5f,  0.5f, 0.5f, 0.5f,
+     0.5f, 0.5f, 0.5f, -0.5f, 0.5f, 0.5f, -0.5f, 0.5f,-0.5f
+};
 
-// ... inside main() ...
-
+// Prototypes
+void init_gl_and_window(GLFWwindow** window);
+void mouse_callback(GLFWwindow* window, double xpos, double ypos);
+void sync_input(GLFWwindow* window, Registry* reg, Entity player);
+GLuint setup_cube_vao();
+GLuint create_demo_shader(const char* vert_src, const char* frag_src);
 
 int main() {
+    printf("--- Engine Starting ---\n");
+    fflush(stdout);
 
-#ifdef _WIN32
-  char path[MAX_PATH];
-  // Get the full path of the executable
-  GetModuleFileNameA(NULL, path, MAX_PATH);
+    GLFWwindow* window = NULL;
+    init_gl_and_window(&window);
 
-  // Find the last backslash to isolate the directory
-  char* lastBackslash = strrchr(path, '\\');
-  if (lastBackslash) {
-    *lastBackslash = '\0'; // Terminate the string at the slash
-    SetCurrentDirectoryA(path); // Change the working directory to the exe folder
-  }
-#endif
+    /* 1. Allocate Registry on Heap */
+    Registry* registry = (Registry*)malloc(sizeof(Registry));
+    if (!registry) return -1;
+    ecs_init(registry);
 
-  glfwInit();
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    /* 2. Register Components */
+    ecs_register_component(registry, COMP_TRANSFORM, sizeof(TransformComponent));
+    ecs_register_component(registry, COMP_CAMERA,    sizeof(CameraComponent));
+    ecs_register_component(registry, COMP_INPUT,     sizeof(InputComponent));
 
-  
-  GLFWwindow* window = glfwCreateWindow(800, 600, "LearnOpenGL", NULL, NULL);
+    /* 3. Visuals Init */
+    GLuint shader = create_demo_shader(VERT_SRC, FRAG_SRC);
+    GLuint VAO    = setup_cube_vao();
 
-  if (window == NULL){
-    printf("Failed to create GLFW window\n");
+    /* 4. Create Player Entity */
+    Entity player = ecs_create_entity(registry);
+    
+    TransformComponent* t = (TransformComponent*)ecs_add_component(registry, player, COMP_TRANSFORM);
+    t->position[0] = 0.0f; t->position[1] = 0.0f; t->position[2] = 3.0f;
+    t->yaw   = -90.0f;
+    t->pitch =  0.0f;
+
+    CameraComponent* c = (CameraComponent*)ecs_add_component(registry, player, COMP_CAMERA);
+    vec3 up_init = {0.0f, 1.0f, 0.0f};
+    glm_vec3_copy(up_init, c->world_up);
+    c->fov = 45.0f;
+
+    ecs_add_component(registry, player, COMP_INPUT);
+
+    printf("--- ECS World Ready ---\n");
+    fflush(stdout);
+
+    /* 5. Main Loop */
+    float last_frame = 0.0f;
+    while (!glfwWindowShouldClose(window)) {
+        float current_frame = (float)glfwGetTime();
+        float delta_time = current_frame - last_frame;
+        last_frame = current_frame;
+
+        glfwPollEvents();
+
+        // Layer 0: Bridge OS/Input to ECS
+        sync_input(window, registry, player);
+
+
+        // LAYER 0: Input (Reads Hardware -> Writes to InputComponent)
+        input_system_update(registry, window);
+
+        // Layer 1: Logic
+        camera_system_update(registry, delta_time);
+
+        // RESET MOUSE DELTAS FOR NEXT FRAME
+        g_mouse_dx = 0.0f;
+        g_mouse_dy = 0.0f;
+
+        // Layer 12: Render
+        glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        
+        render_system_update(registry, shader, VAO, player);
+
+        glfwSwapBuffers(window);
+    }
+
+    free(registry);
     glfwTerminate();
-    return -1;
-  }
-  glfwMakeContextCurrent(window);
-  if(!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-    printf("Failed to init GLAD\n");
-    return -1;
-  }
+    return 0;
+}
 
-  // get the gpu system max vertex attrib
-  int nrAttributes;
-  glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &nrAttributes);
-  printf("Maximum nr of vertex attributes supported: %d\n", nrAttributes);
+void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
+    (void)window;
+    if (first_mouse) {
+        last_x = (float)xpos;
+        last_y = (float)ypos;
+        first_mouse = 0;
+    }
 
-  // get the clock system frequency
-  // uint64_t frequency = glfwGetTimerFrequency();
-  // printf("Timer frequency in hz: %llu", frequency);
-  
+    g_mouse_dx = (float)xpos - last_x;
+    g_mouse_dy = last_y - (float)ypos; // Reversed: y-coords range from bottom to top
 
+    last_x = (float)xpos;
+    last_y = (float)ypos;
+}
 
-  glViewport(0, 0, 800, 600);
-  glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+void sync_input(GLFWwindow* window, Registry* reg, Entity player) {
+    InputComponent* input = (InputComponent*)ecs_get_component(reg, player, COMP_INPUT);
+    if (!input) return;
 
-  colorVal red = {1.0f, 0.0f, 0.0f, 1.0f};
-   
-  float vertices[] = {
-    0.5f, 0.5f, 0.0f, // top right
-    0.5f, -0.5f, 0.0f, // bottom right
-    // -0.5f, 0.5f, 0.0f, // top left
+    // Movement axes
+    input->y_axis = 0.0f;
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) input->y_axis += 1.0f;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) input->y_axis -= 1.0f;
+    
+    input->x_axis = 0.0f;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) input->x_axis += 1.0f;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) input->x_axis -= 1.0f;
 
-    // 0.5f, -0.5f, 0.0f, // bottom right
-    -0.5f, -0.5f, 0.0f, // bottom left
-    // -0.5f, 0.5f, 0.0f // top left
-  };
+    // Mouse deltas
+    input->mouse_dx = g_mouse_dx;
+    input->mouse_dy = g_mouse_dy;
+}
 
-  unsigned int indices[] = {
-    // 0, 1, 3, // first triangle
-    // 1, 2, 3 // second triangle
-    0, 1, 2,
-  };
+void init_gl_and_window(GLFWwindow** window) {
+    if (!glfwInit()) exit(EXIT_FAILURE);
 
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-  // getting the vertex shader source (using a file instead)
-  char * vertexShaderSource = get_shader_content("../src/shaders/dark_tri.vs");
+    *window = glfwCreateWindow(1280, 720, "ECS Camera Demo", NULL, NULL);
+    if (!*window) { glfwTerminate(); exit(EXIT_FAILURE); }
 
-  if (vertexShaderSource == NULL || strlen(vertexShaderSource) == 0) {
-      printf("CRITICAL ERROR: Vertex Shader source is empty or file not found!\n");
-  } else {
-      printf("Vertex Shader Loaded:\n%s\n", vertexShaderSource);
-  }
-  // store vertexShader as int, returned as a reference id
-  unsigned int vertexShader;
-  vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glfwMakeContextCurrent(*window);
+    
+    // CAPTURE MOUSE
+    glfwSetInputMode(*window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetCursorPosCallback(*window, mouse_callback);
 
-  // compile the shader
-  glShaderSource(vertexShader, 1, (const char**)&vertexShaderSource, NULL);
-  glCompileShader(vertexShader);
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) exit(EXIT_FAILURE);
+    
+    glEnable(GL_DEPTH_TEST);
+}
 
-  // see compile success or not
-  int success_vs; char infoLog_vs[512];
-
-  glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success_vs);
-
-  if(!success_vs) {
-    glGetShaderInfoLog(vertexShader, 512, NULL, infoLog_vs);
-    printf("ERROR::SHADER::VERTEX::COMPILATION_FAILED\n%s\n", infoLog_vs); 
-  }
-
-  // getting the fragment shader source (using a file instead)
-  char * fragmentShaderSource = get_shader_content("../src/shaders/orange_tri.fs");
-
-  if (fragmentShaderSource == NULL || strlen(fragmentShaderSource) == 0) {
-      printf("CRITICAL ERROR: Vertex Shader source is empty or file not found!\n");
-  } else {
-      printf("Fragment Shader Loaded:\n%s\n", fragmentShaderSource);
-  }
-  // compile fragment shader
-  unsigned int fragmentShader;
-  fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(fragmentShader, 1, (const char**)&fragmentShaderSource, NULL);
-
-  glCompileShader(fragmentShader);
-
-  // see compile success or not
-  int success_fs; char infoLog_fs[512];
-
-  glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success_fs);
-
-  if(!success_fs) {
-    glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog_fs);
-    printf("ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n%s\n", infoLog_fs); 
-  }
-
-  // getting the ID for shader program
-  unsigned int shaderProgram;
-  shaderProgram = glCreateProgram();
-
-  // linking the shaders together. Note that in this part, if the output from one shader into another does not match, it will cause linking error
-  glAttachShader(shaderProgram, vertexShader);
-  glAttachShader(shaderProgram, fragmentShader);
-  glLinkProgram(shaderProgram);
-  free(fragmentShaderSource);
-
-  // see linking and program creation error log
-  int success_link; char infoLog_link[512];
-  glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success_link);
-  if(!success_link) {
-    glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog_link);
-    printf("ERROR::SHADER::PROGRAM::LINKING_FAILED\n%s\n", infoLog_link);
-  }
-
-  
-  // shader cleanup
-  glDeleteShader(vertexShader);
-  glDeleteShader(fragmentShader);
-
-  unsigned int VBO, VAO;
-  glGenVertexArrays(1, &VAO);
-  glBindVertexArray(VAO);
-  glGenBuffers(1, &VBO);                                        // could also be GL_STREAM_DRAW (data set once, used a few times)
-  glBindBuffer(GL_ARRAY_BUFFER, VBO);                           // v          or GL_DYNAMIC_DRAW (data changed a lot, used many times)
-  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-  // configuring how vertices should be handles
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(0);
-
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-  // handling element buffer object
-  unsigned int EBO;
-  glGenBuffers(1, &EBO);
-
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-  // set wireframe mode
-  // glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-
-  // render loop
-  while(!glfwWindowShouldClose(window)) {
-
-    // input processing
-    processInput(window);
-
-
-    clearcolor_struct(red);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    // activating the shader program
-    glUseProgram(shaderProgram);
+GLuint setup_cube_vao() {
+    GLuint VAO, VBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
     glBindVertexArray(VAO);
-    // glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-    glBindVertexArray(0);
-
-    // uint64_t rawValue = glfwGetTimerValue();
-    // uint64_t freq = glfwGetTimerFrequency(); // 10,000,000 in your case
-    //
-    // // This is essentially what glfwGetTime() returns:
-    // double timeInSeconds = (double)rawValue / (double)freq;
-    // printf("%f\n", timeInSeconds);
-
-    // check for events
-    glfwSwapBuffers(window);
-    glfwPollEvents(); // swap buffer -> front & back
-  }
-  glfwTerminate();
-
-  return 0;
+    glBufferData(GL_ARRAY_BUFFER, sizeof(CUBE_VERTS), CUBE_VERTS, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    return VAO;
 }
 
-void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
-  glViewport(0, 0, width, height);
-}
-
-void processInput(GLFWwindow* window) {
-  if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-    glfwSetWindowShouldClose(window, true);
-  }
-}
-void clearcolor_struct(colorVal color) {
-  glClearColor(color.r, color.g, color.b, color.a);
+GLuint create_demo_shader(const char* v_src, const char* f_src) {
+    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vs, 1, &v_src, NULL);
+    glCompileShader(vs);
+    GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fs, 1, &f_src, NULL);
+    glCompileShader(fs);
+    GLuint p = glCreateProgram();
+    glAttachShader(p, vs); glAttachShader(p, fs); glLinkProgram(p);
+    glDeleteShader(vs); glDeleteShader(fs);
+    return p;
 }
