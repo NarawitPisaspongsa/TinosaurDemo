@@ -13,7 +13,9 @@ Small demo project focusing on ECS architecture in C and gun implementation.
 * **Build:** Optimized for low overhead
 
 ### Video Demo (30s)
-![](recording.mp4)
+
+### Watch Demo
+[![Tinosaur Demo Video](https://raw.githubusercontent.com/NarawitPisaspongsa/TinosaurDemo/main/mpv-shot0001.jpg)](https://github.com/NarawitPisaspongsa/TinosaurDemo/blob/main/recording.mp4)
 
 ---
 
